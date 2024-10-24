@@ -14,14 +14,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ['https://progress-page-frontend-bnhv.onrender.com'], // Adjust this to match your frontend's URL
+    origin: 'https://progress-page-frontend-bnhv.onrender.com', // Adjust this to match your frontend's URL
     methods: ["GET", "POST"],
     credentials: true, // Allow credentials to be sent
   }
 });
 
 app.use(cors({
-  origin: ['https://progress-page-frontend-bnhv.onrender.com'], // Adjust this to match your frontend's URL
+  origin: 'https://progress-page-frontend-bnhv.onrender.com', // Adjust this to match your frontend's URL
   credentials: true // Allow credentials to be sent
 }));
 
