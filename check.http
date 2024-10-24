@@ -1,0 +1,17 @@
+GET http://localhost:3000/getting_data
+
+###
+
+POST http://localhost:3000/posting_data
+
+{
+    "todoItem": "Buy groceries"
+}
+
+###
+
+POST http://localhost:5000/send-data
+
+{
+  "email": "seereddym@gmail.com"
+}
