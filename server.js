@@ -14,14 +14,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: 'https://progress-page-frontend-bnhv.onrender.com', // Adjust this to match your frontend's URL
+    origin: ['http://localhost:3000','https://progress-fe.onrender.com'], // Adjust this to match your frontend's URL
     methods: ["GET", "POST"],
     credentials: true, // Allow credentials to be sent
   }
 });
 
 app.use(cors({
-  origin: 'https://progress-page-frontend-bnhv.onrender.com', // Adjust this to match your frontend's URL
+  origin: ['http://localhost:3000','https://progress-fe.onrender.com'], // Adjust this to match your frontend's URL
   credentials: true // Allow credentials to be sent
 }));
 
@@ -279,8 +279,8 @@ app.post('/verify-mail', async (req, res) => {
   const { email } = req.body;
 
   const uniqueId = Date.now(); // Create a unique ID for verification
-  const acceptLink = `https://progress-page-frontend2.onrender.com/verify/accept/${uniqueId}/${email}`;
-  const rejectLink = `https://progress-page-frontend2.onrender.com/verify/reject/${uniqueId}/${email}`;
+  const acceptLink = `https://progress-fe.onrender.com/verify/accept/${uniqueId}/${email}`;
+  const rejectLink = `https://progress-fe.onrender.com/verify/reject/${uniqueId}/${email}`;
 
   try {
     const mailOptions = {
