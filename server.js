@@ -279,8 +279,8 @@ app.post('/verify-mail', async (req, res) => {
   const { email } = req.body;
 
   const uniqueId = Date.now(); // Create a unique ID for verification
-  const acceptLink = `https://progress-page-backend2.onrender.com/verify/accept/${uniqueId}/${email}`;
-  const rejectLink = `https://progress-page-backend2.onrender.com/verify/reject/${uniqueId}/${email}`;
+  const acceptLink = `https://progress-page-frontend2.onrender.com/verify/accept/${uniqueId}/${email}`;
+  const rejectLink = `https://progress-page-frontend2.onrender.com/verify/reject/${uniqueId}/${email}`;
 
   try {
     const mailOptions = {
