@@ -279,8 +279,8 @@ app.post('/verify-mail', async (req, res) => {
   const { email } = req.body;
 
   const uniqueId = Date.now(); // Create a unique ID for verification
-  const acceptLink = `https://progress-fe.onrender.com/verify/accept/${uniqueId}/${email}`;
-  const rejectLink = `https://progress-fe.onrender.com/verify/reject/${uniqueId}/${email}`;
+  const acceptLink = `https://separated-dot-variraptor.glitch.me/verify/accept/${uniqueId}/${email}`;
+  const rejectLink = `https://separated-dot-variraptor.glitch.me/verify/reject/${uniqueId}/${email}`;
 
   try {
     const mailOptions = {
