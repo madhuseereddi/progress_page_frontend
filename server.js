@@ -1,5 +1,5 @@
 const express = require("express");
-const mysql = require("mysql2/promise");
+const sqlite3 = require("sqlite3").verbose(); // Import SQLite
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
@@ -7,6 +7,7 @@ const { Server } = require("socket.io");
 const http = require("http");
 const cookieParser = require("cookie-parser");
 
+// Initialize Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -17,74 +18,65 @@ const io = new Server(server, {
   },
 });
 
+// Middleware
 app.use(
   cors({
     origin: ["http://localhost:3000", "https://progress-fe.onrender.com"],
     credentials: true,
   })
 );
-
 app.use(bodyParser.json());
 app.use(cookieParser());
 
-const dbPool = mysql.createPool({
-  host: "localhost",
-  user: "root",
-  password: "Saimadhu@123",
-  database: "progresdb",
+// Initialize SQLite database
+const db = new sqlite3.Database("progress.db", (err) => {
+  if (err) {
+    console.error("Could not connect to SQLite database", err);
+  } else {
+    console.log("Connected to SQLite database.");
+  }
 });
 
 // Create required tables if they don't exist
-async function createTables() {
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
+function createTables() {
+  const createTodoTableQuery = `CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
+  
+  const createFaceDataTableQuery = `CREATE TABLE IF NOT EXISTS face_data (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day DATE NOT NULL,
+      imgSrc TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
+  
+  const createOtpTableQuery = `CREATE TABLE IF NOT EXISTS otp (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      otp TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL
+    )`;
+  
+  const createVerificationStatusTableQuery = `CREATE TABLE IF NOT EXISTS verification_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      action TEXT NOT NULL,
+      unique_id TEXT NOT NULL,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
 
-    // Create todos table
-    const createTodoTableQuery = `CREATE TABLE IF NOT EXISTS todos (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        item VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`;
-    await connection.execute(createTodoTableQuery);
+  db.serialize(() => {
+    db.run(createTodoTableQuery);
+    db.run(createFaceDataTableQuery);
+    db.run(createOtpTableQuery);
+    db.run(createVerificationStatusTableQuery);
+  });
 
-    // Create face_data table
-    const createFaceDataTableQuery = `CREATE TABLE IF NOT EXISTS face_data (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        day DATE NOT NULL,
-        imgSrc LONGTEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`;
-    await connection.execute(createFaceDataTableQuery);
-
-    // Create otp table
-    const createOtpTableQuery = `CREATE TABLE IF NOT EXISTS otp (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        otp VARCHAR(6) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP NOT NULL
-      )`;
-    await connection.execute(createOtpTableQuery);
-
-    // Create verification_status table
-    const createVerificationStatusTableQuery = `CREATE TABLE IF NOT EXISTS verification_status (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        action VARCHAR(255) NOT NULL,
-        unique_id VARCHAR(255) NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`;
-    await connection.execute(createVerificationStatusTableQuery);
-
-    console.log("Tables created or already exist.");
-  } catch (error) {
-    console.error("Error creating tables:", error);
-  } finally {
-    if (connection) connection.release();
-  }
+  console.log("Tables created or already exist.");
 }
-
 
 createTables();
 
@@ -103,7 +95,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // Endpoint to send OTP
-app.post("/send-otp", async (req, res) => {
+app.post("/send-otp", (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -111,15 +103,15 @@ app.post("/send-otp", async (req, res) => {
   }
 
   const otp = generateOtp();
-  const expiresAt = new Date(Date.now() + 5 * 60000); // OTP valid for 5 minutes
+  const expiresAt = new Date(Date.now() + 5 * 60000).toISOString(); // OTP valid for 5 minutes
 
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
-
-    // Store OTP in the database
-    const query = "INSERT INTO otp (email, otp, expires_at) VALUES (?, ?, ?)";
-    await connection.execute(query, [email, otp, expiresAt]);
+  // Store OTP in the database
+  const query = "INSERT INTO otp (email, otp, expires_at) VALUES (?, ?, ?)";
+  db.run(query, [email, otp, expiresAt], function (error) {
+    if (error) {
+      console.error("Error storing OTP:", error);
+      return res.status(500).json({ error: "Error sending OTP." });
+    }
 
     // Send OTP via email
     const mailOptions = {
@@ -145,35 +137,27 @@ app.post("/send-otp", async (req, res) => {
       io.emit("otpSent", { email });
       res.status(200).json({ message: "OTP sent successfully!" });
     });
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
-  }
+  });
 });
 
 // Endpoint to verify OTP
-app.post("/verify-otp", async (req, res) => {
+app.post("/verify-otp", (req, res) => {
   const { email, otp } = req.body;
 
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and OTP are required" });
   }
 
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
+  const query =
+    "SELECT * FROM otp WHERE email = ? AND otp = ? AND expires_at > datetime('now')";
+  db.get(query, [email, otp], (error, row) => {
+    if (error) {
+      console.error("Database connection error:", error);
+      return res.status(500).send("Database connection error");
+    }
 
-    const query =
-      "SELECT * FROM otp WHERE email = ? AND otp = ? AND expires_at > NOW()";
-    const [rows] = await connection.execute(query, [email, otp]);
-
-    if (rows.length > 0) {
-      await connection.execute("DELETE FROM otp WHERE email = ? AND otp = ?", [
-        email,
-        otp,
-      ]);
+    if (row) {
+      db.run("DELETE FROM otp WHERE email = ? AND otp = ?", [email, otp]);
       io.emit("verificationAccepted", { email });
       res.cookie("verificationStatus", "accepted", { httpOnly: true });
       res.status(200).json({ message: "OTP verified successfully!" });
@@ -181,132 +165,170 @@ app.post("/verify-otp", async (req, res) => {
       res.cookie("verificationStatus", "rejected", { httpOnly: true });
       res.status(400).json({ error: "Invalid or expired OTP." });
     }
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
-  }
+  });
 });
 
-
-
 // Endpoint to get todos
-app.get("/getting_data", async (req, res) => {
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
-    const [rows] = await connection.execute("SELECT * FROM todos");
+app.get("/getting_data", (req, res) => {
+  db.all("SELECT * FROM todos", [], (error, rows) => {
+    if (error) {
+      console.error("Database connection error:", error);
+      return res.status(500).send("Database connection error");
+    }
     res.json(rows);
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
-  }
+  });
 });
 
 // Endpoint to post todo items
-app.post("/posting_data", async (req, res) => {
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
+app.post("/posting_data", (req, res) => {
+  const { todoItem } = req.body;
 
-    const { todoItem } = req.body;
-
-    if (!todoItem) {
-      return res.status(400).json({ error: "Todo item is required." });
-    }
-
-    const currentDate = new Date();
-    const query = "INSERT INTO todos (item, created_at) VALUES (?, ?)";
-    const [result] = await connection.execute(query, [todoItem, currentDate]);
-
-    res
-      .status(201)
-      .json({ id: result.insertId, item: todoItem, date: currentDate });
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
+  if (!todoItem) {
+    return res.status(400).json({ error: "Todo item is required." });
   }
+
+  const currentDate = new Date().toISOString();
+  const query = "INSERT INTO todos (item, created_at) VALUES (?, ?)";
+  db.run(query, [todoItem, currentDate], function (error) {
+    if (error) {
+      console.error("Database connection error:", error);
+      return res.status(500).send("Database connection error");
+    }
+    res.status(201).json({ id: this.lastID, item: todoItem, date: currentDate });
+  });
 });
 
 // Endpoint to save face data
-app.post("/save_face_data", async (req, res) => {
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
+app.post("/save_face_data", (req, res) => {
+  const { day, imgSrc } = req.body;
 
-    const { day, imgSrc } = req.body;
-
-    if (!day || !imgSrc) {
-      return res.status(400).json({ error: "Day and imgSrc are required." });
-    }
-
-    const query = "INSERT INTO face_data (day, imgSrc) VALUES (?, ?)";
-    const [result] = await connection.execute(query, [day, imgSrc]);
-
-    res.status(201).json({ id: result.insertId, day, imgSrc });
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
+  if (!day || !imgSrc) {
+    return res.status(400).json({ error: "Day and imgSrc are required." });
   }
+
+  const query = "INSERT INTO face_data (day, imgSrc) VALUES (?, ?)";
+  db.run(query, [day, imgSrc], function (error) {
+    if (error) {
+      console.error("Database connection error:", error);
+      return res.status(500).send("Database connection error");
+    }
+    res.status(201).json({ id: this.lastID, day, imgSrc });
+  });
 });
 
 // Endpoint to get the latest face data
-app.get("/getting_face_data", async (req, res) => {
-  let connection;
-  try {
-    connection = await dbPool.getConnection();
-    const [rows] = await connection.execute(
-      "SELECT imgSrc FROM face_data ORDER BY created_at DESC LIMIT 1"
-    );
-    res.json(rows);
-  } catch (error) {
-    console.error("Database connection error:", error);
-    res.status(500).send("Database connection error");
-  } finally {
-    if (connection) connection.release();
+app.get("/getting_face_data", (req, res) => {
+  db.get(
+    "SELECT imgSrc FROM face_data ORDER BY created_at DESC LIMIT 1",
+    (error, row) => {
+      if (error) {
+        console.error("Database connection error:", error);
+        return res.status(500).send("Database connection error");
+      }
+      res.json(row);
+    }
+  );
+});
+
+// Email verification endpoint
+app.post("/verify-mail", (req, res) => {
+  const { email } = req.body;
+
+  const uniqueId = Date.now();
+  const acceptLink = `https://separated-dot-variraptor.glitch.me/verify/accept/${uniqueId}/${email}`;
+  const rejectLink = `https://separated-dot-variraptor.glitch.me/verify/reject/${uniqueId}/${email}`;
+
+  const mailOptions = {
+    from: '"Verification Team" <no-reply@quotidian.com>',
+    to: email,
+    subject: "Email Verification Request",
+    html: `
+      <h1>Email Verification</h1>
+      <p>Please verify your email address by clicking one of the links below:</p>
+      <a href="${acceptLink}" style="padding: 10px; background-color: green; color: white; text-decoration: none;">Accept</a>
+      <a href="${rejectLink}" style="padding: 10px; background-color: red; color: white; text-decoration: none;">Reject</a>
+    `,
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.error("Error sending email:", error);
+      return res.status(500).json({ error: "Error sending verification email." });
+    }
+
+    const query = "INSERT INTO verification_status (email, action, unique_id) VALUES (?, ?, ?)";
+    db.run(query, [email, 'pending', uniqueId], (err) => {
+      if (err) {
+        console.error("Error saving verification status:", err);
+        return res.status(500).json({ error: "Error saving verification status." });
+      }
+
+      io.emit("verificationEmailSent", { email });
+      res.status(200).json({ message: "Verification email sent!" });
+    });
+  });
+});
+
+// Endpoint to check verification status
+// Accept or reject verification
+app.get('/verify/:action/:uniqueId/:email', async (req, res) => {
+  const { action, uniqueId, email } = req.params;
+
+  // Log the incoming parameters
+  console.log("Received:", { action, uniqueId, email });
+
+  // Check if parameters are defined
+  if (!action || !uniqueId || !email) {
+    return res.status(400).json({ message: "Missing parameters." });
+  }
+
+  const timestamp = Date.now();
+  const actionSubstring = action.substring(0, 6);
+
+  // Ensure the action is either "accept" or "reject"
+  if (actionSubstring === 'accept' || actionSubstring === 'reject') {
+    const query = `INSERT INTO verification_status (email, action, unique_id, timestamp) VALUES (?, ?, ?, ?)`;
+    
+    db.run(query, [email, action, uniqueId, new Date(timestamp)], function (error) {
+      if (error) {
+        console.error("Database error:", error.message);
+        return res.status(500).json({ error: "Database error.", details: error.message });
+      }
+
+      res.send({
+        message: `Verification ${action}ed!`,
+        uniqueAction: `${action}_${timestamp}`, // Concatenated action with timestamp
+      });
+    });
+  } else {
+    res.status(400).json({ message: "Invalid action" });
   }
 });
 
-fetchVerificationStatus = async () => {
-  const { email } = this.state;
-  if (!email) return; // Ensure email is present
+// Retrieve verification status
+app.get("/verification-status/:email", async (req, res) => {
+  const { email } = req.params;
 
-  try {
-    const response = await fetch(`https://separated-dot-variraptor.glitch.me/verification-status/${email}`, {
-      method: "GET",
-      credentials: "include",
-    });
+  const query = `SELECT action, timestamp FROM verification_status WHERE email = ? ORDER BY timestamp DESC LIMIT 1`;
 
-    // Check if the response is OK (status in the range 200-299)
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
+  db.get(query, [email], (error, row) => {
+    if (error) {
+      console.error("Database error:", error);
+      return res.status(500).json({ error: "Database error." });
     }
 
-    const data = await response.json();
-
-    // Update this logic based on the response from the server
-    if (data.message.includes("accept")) {
-      this.handleVerificationAccepted();
-    } else if (data.message.includes("reject")) {
-      this.handleVerificationRejected();
+    if (row) {
+      const { action, timestamp } = row;
+      res.json({ message: `Last verification action: ${action} at ${new Date(timestamp).toISOString()}` });
     } else {
-      this.setState({ otpStatusMessage: data.message });
+      res.json({ message: "No verification action has been performed yet." });
     }
-  } catch (error) {
-    console.error("Error fetching verification status:", error);
-    this.setState({ otpStatusMessage: "An error occurred while fetching verification status." });
-  }
-};
+  });
+});
 
-// Server setup
+
+// Start the server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
